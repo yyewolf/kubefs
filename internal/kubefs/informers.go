@@ -1,6 +1,7 @@
 package kubefs
 
 import (
+	"context"
 	"os"
 	"strings"
 	"time"
@@ -58,7 +59,7 @@ func Inform(kubefs *KubeFS) {
 		AddFunc: func(obj interface{}) {
 			ns := obj.(*corev1.Namespace)
 			klog.Infof("Namespace Added: %s", ns.Name)
-			kubefs.EnsureNamespace(ns.Name, false)
+			kubefs.AddNamespace(context.Background(), ns.Name, false)
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
 			oldNs := oldObj.(*corev1.Namespace)
@@ -83,7 +84,7 @@ func Inform(kubefs *KubeFS) {
 				}
 			}
 			klog.Infof("Namespace Deleted: %s", ns.Name)
-			kubefs.DeleteNamespace(ns.Name)
+			kubefs.RemoveNamespace(context.Background(), ns.Name)
 		},
 	})
 
@@ -99,7 +100,7 @@ func Inform(kubefs *KubeFS) {
 		klog.Fatalf("Error creating dynamic client: %v", err)
 	}
 
-	kubefs.client = dynamicClient
+	kubefs.DynamicClient = dynamicClient
 
 	// Create a shared informer factory for apiextensions (specifically for CRDs)
 	apiextensionsInformerFactory := apiextensionsinformers.NewSharedInformerFactory(apiextensionsClient, time.Second*30)
@@ -219,7 +220,7 @@ func addInformer(dynamicClient dynamic.Interface, gvr schema.GroupVersionResourc
 			unstructuredObj := obj.(*unstructured.Unstructured)
 			klog.Infof("Resource ADDED [%s]: %s/%s", gvr.String(), unstructuredObj.GetNamespace(), unstructuredObj.GetName())
 
-			kubefs.AddResource(unstructuredObj.GetName(), gvr.Resource, unstructuredObj.GetNamespace(), schema.GroupVersionKind{
+			kubefs.AddResource(context.Background(), unstructuredObj.GetName(), gvr.Resource, unstructuredObj.GetNamespace(), schema.GroupVersionKind{
 				Group:   gvr.Group,
 				Version: gvr.Version,
 				Kind:    kind,
@@ -231,6 +232,12 @@ func addInformer(dynamicClient dynamic.Interface, gvr schema.GroupVersionResourc
 			if oldUnstructuredObj.GetResourceVersion() != newUnstructuredObj.GetResourceVersion() {
 				// klog.V(4).Infof("Resource UPDATED [%s]: %s/%s", gvr.String(), newUnstructuredObj.GetNamespace(), newUnstructuredObj.GetName())
 			}
+
+			kubefs.AddResource(context.Background(), newUnstructuredObj.GetName(), gvr.Resource, newUnstructuredObj.GetNamespace(), schema.GroupVersionKind{
+				Group:   gvr.Group,
+				Version: gvr.Version,
+				Kind:    kind,
+			})
 		},
 		DeleteFunc: func(obj interface{}) {
 			unstructuredObj, ok := obj.(*unstructured.Unstructured)
@@ -248,7 +255,7 @@ func addInformer(dynamicClient dynamic.Interface, gvr schema.GroupVersionResourc
 			}
 			klog.Infof("Resource DELETED [%s]: %s/%s", gvr.String(), unstructuredObj.GetNamespace(), unstructuredObj.GetName())
 
-			kubefs.DeleteResource(unstructuredObj.GetName(), unstructuredObj.GetNamespace(), schema.GroupVersionKind{
+			kubefs.DeleteResource(context.Background(), unstructuredObj.GetName(), gvr.Resource, unstructuredObj.GetNamespace(), schema.GroupVersionKind{
 				Group:   gvr.Group,
 				Version: gvr.Version,
 				Kind:    kind,

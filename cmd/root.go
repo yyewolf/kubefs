@@ -1,15 +1,17 @@
 package cmd
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
-	"bazil.org/fuse"
-	"bazil.org/fuse/fs"
+	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/spf13/cobra"
 	"github.com/yyewolf/kubefs/internal/kubefs"
+	"k8s.io/utils/ptr"
 )
 
 var rootCmd = &cobra.Command{
@@ -25,35 +27,23 @@ This can be useful for development and debugging purposes.`,
 		}
 		mountpoint := args[0]
 
-		fuseConn, err := fuse.Mount(
-			mountpoint,
-			fuse.FSName("kubefs"),
-			fuse.Subtype("kubefs"),
-		)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer fuseConn.Close()
-
 		var signalChan = make(chan os.Signal, 1)
 		signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
 
-		kubeFs := kubefs.KubeFS{
-			Namespaces: make(map[string]*kubefs.Namespace),
+		kubeFs := &kubefs.KubeFS{}
+		server, err := fs.Mount(mountpoint, kubeFs, &fs.Options{
+			AttrTimeout:  ptr.To(1 * time.Millisecond),
+			EntryTimeout: ptr.To(1 * time.Millisecond),
+		})
+		if err != nil {
+			log.Fatalf("Mount fail: %v\n", err)
 		}
-		kubeFs.EnsureNamespace("clusterwide", true)
 
-		go func() {
-			err = fs.Serve(fuseConn, kubeFs)
-			if err != nil {
-				log.Fatal(err)
-			}
-		}()
-
-		kubefs.Inform(&kubeFs)
+		kubeFs.AddNamespace(context.Background(), "clusterwide", true)
+		kubefs.Inform(kubeFs)
 
 		<-signalChan
-		err = fuse.Unmount(mountpoint)
+		err = server.Unmount()
 		if err != nil {
 			log.Fatal(err)
 		}

@@ -32,7 +32,12 @@ func (k *KubeFS) RemoveNamespace(ctx context.Context, name string) {
 
 func (k *KubeFS) AddResource(ctx context.Context, name string, plural string, namespace string, gvk schema.GroupVersionKind) {
 	if namespace == "" {
+		if !k.IsClusterScope() {
+			return
+		}
 		namespace = "clusterwide"
+	} else if !k.AllowsNamespace(namespace) {
+		return
 	}
 
 	k.AddNamespace(ctx, namespace, namespace == "clusterwide")
@@ -67,7 +72,12 @@ func (k *KubeFS) AddResource(ctx context.Context, name string, plural string, na
 
 func (k *KubeFS) DeleteResource(ctx context.Context, name string, plural string, namespace string, gvk schema.GroupVersionKind) {
 	if namespace == "" {
+		if !k.IsClusterScope() {
+			return
+		}
 		namespace = "clusterwide"
+	} else if !k.AllowsNamespace(namespace) {
+		return
 	}
 
 	res := &Resource{

@@ -24,8 +24,13 @@ import (
 	apiextensionsinformers "k8s.io/apiextensions-apiserver/pkg/client/informers/externalversions"
 )
 
+type informerKey struct {
+	gvr       schema.GroupVersionResource
+	namespace string
+}
+
 // A map to keep track of active informers for all resources
-var activeInformers = make(map[schema.GroupVersionResource]cache.SharedInformer)
+var activeInformers = make(map[informerKey]cache.SharedInformer)
 
 // Stop channel for all informers
 var stopCh chan struct{}
@@ -51,46 +56,44 @@ func Inform(kubefs *KubeFS) {
 	}
 
 	// Load namespaces and watch for namespace changes
-	namespaceInformerFactory := informers.NewSharedInformerFactory(kubeClient, time.Second*30)
-	namespaceInformer := namespaceInformerFactory.Core().V1().Namespaces().Informer()
+	var namespaceInformer cache.SharedInformer
+	var namespaceInformerFactory informers.SharedInformerFactory
+	if kubefs.IsClusterScope() {
+		namespaceInformerFactory = informers.NewSharedInformerFactory(kubeClient, time.Second*30)
+		namespaceInformer = namespaceInformerFactory.Core().V1().Namespaces().Informer()
 
-	namespaceInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			ns := obj.(*corev1.Namespace)
-			Debugf("Namespace added: %s", ns.Name)
-			kubefs.AddNamespace(context.Background(), ns.Name, false)
-		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
-			oldNs := oldObj.(*corev1.Namespace)
-			newNs := newObj.(*corev1.Namespace)
-			if oldNs.ResourceVersion != newNs.ResourceVersion {
-				Debugf("Namespace updated: %s (resourceVersion: %s -> %s)", newNs.Name, oldNs.ResourceVersion, newNs.ResourceVersion)
-				// For simplicity, we treat updates as no-ops for now. In production, you might want to handle status changes or labels that affect visibility.
-			}
-		},
-		DeleteFunc: func(obj interface{}) {
-			ns, ok := obj.(*corev1.Namespace)
-			if !ok {
-				tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
-				if !ok {
-					Errorf("Error decoding namespace, invalid type")
-					return
+		namespaceInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc: func(obj interface{}) {
+				ns := obj.(*corev1.Namespace)
+				Debugf("Namespace added: %s", ns.Name)
+				kubefs.AddNamespace(context.Background(), ns.Name, false)
+			},
+			UpdateFunc: func(oldObj, newObj interface{}) {
+				oldNs := oldObj.(*corev1.Namespace)
+				newNs := newObj.(*corev1.Namespace)
+				if oldNs.ResourceVersion != newNs.ResourceVersion {
+					Debugf("Namespace updated: %s (resourceVersion: %s -> %s)", newNs.Name, oldNs.ResourceVersion, newNs.ResourceVersion)
+					// For simplicity, we treat updates as no-ops for now. In production, you might want to handle status changes or labels that affect visibility.
 				}
-				ns, ok = tombstone.Obj.(*corev1.Namespace)
+			},
+			DeleteFunc: func(obj interface{}) {
+				ns, ok := obj.(*corev1.Namespace)
 				if !ok {
-					Errorf("Error decoding namespace tombstone, invalid type")
-					return
+					tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+					if !ok {
+						Errorf("Error decoding namespace, invalid type")
+						return
+					}
+					ns, ok = tombstone.Obj.(*corev1.Namespace)
+					if !ok {
+						Errorf("Error decoding namespace tombstone, invalid type")
+						return
+					}
 				}
-			}
-			Debugf("Namespace deleted: %s", ns.Name)
-			kubefs.RemoveNamespace(context.Background(), ns.Name)
-		},
-	})
-
-	// Create an apiextensions clientset for CRDs
-	apiextensionsClient, err := apiextensionsclientset.NewForConfig(config)
-	if err != nil {
-		Fatalf("Error creating apiextensions clientset: %v", err)
+				Debugf("Namespace deleted: %s", ns.Name)
+				kubefs.RemoveNamespace(context.Background(), ns.Name)
+			},
+		})
 	}
 
 	// Create a dynamic client for custom resources
@@ -101,52 +104,65 @@ func Inform(kubefs *KubeFS) {
 
 	kubefs.DynamicClient = dynamicClient
 
-	// Create a shared informer factory for apiextensions (specifically for CRDs)
-	apiextensionsInformerFactory := apiextensionsinformers.NewSharedInformerFactory(apiextensionsClient, time.Second*30)
-	crdInformer := apiextensionsInformerFactory.Apiextensions().V1().CustomResourceDefinitions().Informer()
+	var crdInformer cache.SharedInformer
+	if kubefs.IsClusterScope() {
+		// Create an apiextensions clientset for CRDs
+		apiextensionsClient, err := apiextensionsclientset.NewForConfig(config)
+		if err != nil {
+			Fatalf("Error creating apiextensions clientset: %v", err)
+		}
 
-	// Register event handlers for CRD additions and deletions
-	crdInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			crd := obj.(*apiextensionsv1.CustomResourceDefinition)
-			Debugf("CRD added: %s", crd.Name)
-			addCRDInformer(dynamicClient, crd, kubefs)
-		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
-			oldCrd := oldObj.(*apiextensionsv1.CustomResourceDefinition)
-			newCrd := newObj.(*apiextensionsv1.CustomResourceDefinition)
-			// Only re-add if spec changes, which might affect GVRs or validation
-			if oldCrd.ResourceVersion != newCrd.ResourceVersion {
-				Debugf("CRD updated: %s (resourceVersion: %s -> %s)", newCrd.Name, oldCrd.ResourceVersion, newCrd.ResourceVersion)
-				// For simplicity, we stop the old and start a new. In production, careful diffing is needed.
-				removeCRDInformer(oldCrd)
-				addCRDInformer(dynamicClient, newCrd, kubefs)
-			}
-		},
-		DeleteFunc: func(obj interface{}) {
-			crd, ok := obj.(*apiextensionsv1.CustomResourceDefinition)
-			if !ok {
-				tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
-				if !ok {
-					Errorf("Error decoding CRD, invalid type")
-					return
-				}
-				crd, ok = tombstone.Obj.(*apiextensionsv1.CustomResourceDefinition)
-				if !ok {
-					Errorf("Error decoding CRD tombstone, invalid type")
-					return
-				}
-			}
-			Debugf("CRD deleted: %s", crd.Name)
-			removeCRDInformer(crd)
-		},
-	})
+		// Create a shared informer factory for apiextensions (specifically for CRDs)
+		apiextensionsInformerFactory := apiextensionsinformers.NewSharedInformerFactory(apiextensionsClient, time.Second*30)
+		crdInformer = apiextensionsInformerFactory.Apiextensions().V1().CustomResourceDefinitions().Informer()
 
-	Infof("Starting CRD informer...")
-	apiextensionsInformerFactory.Start(stopCh)
-	namespaceInformerFactory.Start(stopCh)
-	if !cache.WaitForCacheSync(stopCh, crdInformer.HasSynced, namespaceInformer.HasSynced) {
-		Fatalf("Failed to sync CRD informer cache")
+		// Register event handlers for CRD additions and deletions
+		crdInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc: func(obj interface{}) {
+				crd := obj.(*apiextensionsv1.CustomResourceDefinition)
+				Debugf("CRD added: %s", crd.Name)
+				addCRDInformer(dynamicClient, crd, kubefs)
+			},
+			UpdateFunc: func(oldObj, newObj interface{}) {
+				oldCrd := oldObj.(*apiextensionsv1.CustomResourceDefinition)
+				newCrd := newObj.(*apiextensionsv1.CustomResourceDefinition)
+				// Only re-add if spec changes, which might affect GVRs or validation
+				if oldCrd.ResourceVersion != newCrd.ResourceVersion {
+					Debugf("CRD updated: %s (resourceVersion: %s -> %s)", newCrd.Name, oldCrd.ResourceVersion, newCrd.ResourceVersion)
+					// For simplicity, we stop the old and start a new. In production, careful diffing is needed.
+					removeCRDInformer(oldCrd)
+					addCRDInformer(dynamicClient, newCrd, kubefs)
+				}
+			},
+			DeleteFunc: func(obj interface{}) {
+				crd, ok := obj.(*apiextensionsv1.CustomResourceDefinition)
+				if !ok {
+					tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+					if !ok {
+						Errorf("Error decoding CRD, invalid type")
+						return
+					}
+					crd, ok = tombstone.Obj.(*apiextensionsv1.CustomResourceDefinition)
+					if !ok {
+						Errorf("Error decoding CRD tombstone, invalid type")
+						return
+					}
+				}
+				Debugf("CRD deleted: %s", crd.Name)
+				removeCRDInformer(crd)
+			},
+		})
+
+		Infof("Starting CRD informer...")
+		apiextensionsInformerFactory.Start(stopCh)
+	}
+	if namespaceInformerFactory != nil {
+		namespaceInformerFactory.Start(stopCh)
+	}
+	if crdInformer != nil || namespaceInformer != nil {
+		if !cache.WaitForCacheSync(stopCh, informerSynced(crdInformer, namespaceInformer)...) {
+			Fatalf("Failed to sync informer cache")
+		}
 	}
 	Infof("Informers synced. Discovering server resources...")
 
@@ -169,7 +185,7 @@ func addCRDInformer(dynamicClient dynamic.Interface, crd *apiextensionsv1.Custom
 			Resource: crd.Spec.Names.Plural,
 		}
 
-		addInformer(dynamicClient, gvr, crd.Spec.Names.Kind, kubefs)
+		addInformersForScope(dynamicClient, gvr, crd.Spec.Names.Kind, kubefs, crd.Spec.Scope)
 	}
 }
 
@@ -181,7 +197,7 @@ func removeCRDInformer(crd *apiextensionsv1.CustomResourceDefinition) {
 			Resource: crd.Spec.Names.Plural,
 		}
 
-		if _, exists := activeInformers[gvr]; exists {
+		for _, key := range informerKeysForGVR(gvr) {
 			Warnf("Stopping and removing dynamic informer for custom resource: %s", gvr.String())
 			// This is tricky. There's no direct "Stop" method on cache.SharedInformer
 			// or dynamicinformer.DynamicSharedInformerFactory for individual informers.
@@ -189,25 +205,26 @@ func removeCRDInformer(crd *apiextensionsv1.CustomResourceDefinition) {
 			// For a true dynamic removal, you'd need a factory per GVR and manage their stop channels individually.
 			// For this example, we'll mark it as inactive and rely on the main stopCh.
 			// A more robust solution might involve canceling the context used to start the individual informer.
-			delete(activeInformers, gvr)
+			delete(activeInformers, key)
 			Warnf("Informer for %s marked for removal. Actual goroutine might persist until main stopCh closes.", gvr.String())
 		}
 	}
 }
 
-func addInformer(dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, kind string, kubefs *KubeFS) {
-	if _, exists := activeInformers[gvr]; exists {
+func addInformer(dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, kind string, kubefs *KubeFS, namespace string) {
+	key := informerKey{gvr: gvr, namespace: namespace}
+	if _, exists := activeInformers[key]; exists {
 		return
 	}
 
-	Infof("Adding dynamic informer for resource: %s (Kind: %s)", gvr.String(), kind)
+	Infof("Adding dynamic informer for resource: %s (Kind: %s, Namespace: %s)", gvr.String(), kind, namespace)
 
 	// Create a DynamicSharedInformerFactory for this specific GVR
 	dynamicInformerFactory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(
 		dynamicClient,
-		time.Minute*5,       // Resync period
-		metav1.NamespaceAll, // Watch all namespaces
-		nil,                 // TweakListOptionsFunc (optional)
+		time.Minute*5, // Resync period
+		namespace,
+		nil, // TweakListOptionsFunc (optional)
 	)
 
 	// Get the informer for the specific GVR
@@ -268,7 +285,7 @@ func addInformer(dynamicClient dynamic.Interface, gvr schema.GroupVersionResourc
 		Errorf("Failed to sync informer cache for GVR: %s", gvr.String())
 		return
 	}
-	activeInformers[gvr] = informer
+	activeInformers[key] = informer
 }
 
 func discoverResources(kubeClient kubernetes.Interface, dynamicClient dynamic.Interface, kubefs *KubeFS) {
@@ -276,6 +293,13 @@ func discoverResources(kubeClient kubernetes.Interface, dynamicClient dynamic.In
 	resourceLists, err := discoveryClient.ServerPreferredResources()
 	if err != nil {
 		Errorf("Error discovering resources: %v", err)
+	}
+
+	config := kubefs.GetConfig()
+	namespaceList := config.Namespaces
+	if !kubefs.IsClusterScope() && len(namespaceList) == 0 {
+		Warnf("Namespace scope enabled but no namespaces configured; skipping informer setup")
+		return
 	}
 
 	for _, resourceList := range resourceLists {
@@ -295,15 +319,67 @@ func discoverResources(kubeClient kubernetes.Interface, dynamicClient dynamic.In
 				continue
 			}
 
+			if !kubefs.IsClusterScope() && !resource.Namespaced {
+				continue
+			}
+
 			gvr := schema.GroupVersionResource{
 				Group:    groupVersion.Group,
 				Version:  groupVersion.Version,
 				Resource: resource.Name,
 			}
 
-			addInformer(dynamicClient, gvr, resource.Kind, kubefs)
+			if kubefs.IsClusterScope() {
+				addInformer(dynamicClient, gvr, resource.Kind, kubefs, metav1.NamespaceAll)
+				continue
+			}
+
+			for _, ns := range namespaceList {
+				addInformer(dynamicClient, gvr, resource.Kind, kubefs, ns)
+			}
 		}
 	}
+}
+
+func addInformersForScope(dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, kind string, kubefs *KubeFS, scope apiextensionsv1.ResourceScope) {
+	if kubefs.IsClusterScope() {
+		addInformer(dynamicClient, gvr, kind, kubefs, metav1.NamespaceAll)
+		return
+	}
+
+	if scope != apiextensionsv1.NamespaceScoped {
+		return
+	}
+
+	if len(kubefs.AllowedNamespaces()) == 0 {
+		Warnf("Namespace scope enabled but no namespaces configured; skipping informer for %s", gvr.String())
+		return
+	}
+
+	for _, ns := range kubefs.AllowedNamespaces() {
+		addInformer(dynamicClient, gvr, kind, kubefs, ns)
+	}
+}
+
+func informerKeysForGVR(gvr schema.GroupVersionResource) []informerKey {
+	keys := make([]informerKey, 0, len(activeInformers))
+	for key := range activeInformers {
+		if key.gvr == gvr {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+func informerSynced(informers ...cache.SharedInformer) []cache.InformerSynced {
+	result := make([]cache.InformerSynced, 0, len(informers))
+	for _, informer := range informers {
+		if informer == nil {
+			continue
+		}
+		result = append(result, informer.HasSynced)
+	}
+	return result
 }
 
 func supportsListAndWatch(verbs []string) bool {

@@ -56,7 +56,13 @@ This can be useful for development and debugging purposes.`,
 			log.Fatalf("Mount fail: %v\n", err)
 		}
 
-		kubeFs.AddNamespace(context.Background(), "clusterwide", true)
+		if kubeFs.IsClusterScope() {
+			kubeFs.AddNamespace(context.Background(), "clusterwide", true)
+		} else {
+			for _, ns := range kubeFs.AllowedNamespaces() {
+				kubeFs.AddNamespace(context.Background(), ns, false)
+			}
+		}
 		kubefs.Inform(kubeFs)
 
 		<-signalChan
@@ -125,7 +131,9 @@ func startConfigWatcher(path string, kubeFs *kubefs.KubeFS, stopCh <-chan struct
 					continue
 				}
 				kubefs.SetLogLevel(config.LogLevel)
+				oldConfig := kubeFs.GetConfig()
 				kubeFs.SetConfig(config)
+				warnIfScopeChanged(oldConfig, config)
 				log.Printf("Reloaded config from %s", path)
 			case err, ok := <-watcher.Errors:
 				if !ok {
@@ -145,4 +153,26 @@ func shouldReloadConfig(event fsnotify.Event, path string) bool {
 		event.Has(fsnotify.Create) ||
 		event.Has(fsnotify.Rename) ||
 		event.Has(fsnotify.Remove)
+}
+
+func warnIfScopeChanged(oldConfig kubefs.Config, newConfig kubefs.Config) {
+	if oldConfig.Scope != newConfig.Scope {
+		log.Printf("Scope changed from %s to %s; restart required to apply", oldConfig.Scope, newConfig.Scope)
+		return
+	}
+	if !sameNamespaces(oldConfig.Namespaces, newConfig.Namespaces) {
+		log.Printf("Namespaces changed; restart required to apply")
+	}
+}
+
+func sameNamespaces(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }

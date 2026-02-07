@@ -35,6 +35,30 @@ func (k *KubeFS) GetConfig() Config {
 	return k.Config
 }
 
+func (k *KubeFS) IsClusterScope() bool {
+	cfg := k.GetConfig()
+	return cfg.Scope == ScopeCluster
+}
+
+func (k *KubeFS) AllowedNamespaces() []string {
+	if k.IsClusterScope() {
+		return nil
+	}
+	return k.GetConfig().Namespaces
+}
+
+func (k *KubeFS) AllowsNamespace(name string) bool {
+	if k.IsClusterScope() {
+		return true
+	}
+	for _, ns := range k.GetConfig().Namespaces {
+		if ns == name {
+			return true
+		}
+	}
+	return false
+}
+
 var _ = (fs.NodeGetattrer)((*KubeFS)(nil))
 
 func (k *KubeFS) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {

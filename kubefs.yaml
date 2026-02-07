@@ -1,2 +1,9 @@
 logLevel: info
+scope: cluster
+
+## If you want to watch resources in specific namespaces, change the scope to "namespace" and specify the namespaces.
+# scope: namespace
+# namespaces:
+#   - default
+
 showManagedFields: false

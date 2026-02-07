@@ -298,6 +298,32 @@ func (r *Resource) applyYAML(ctx context.Context, data []byte) syscall.Errno {
 	return syscall.EIO
 }
 
+func (r *Resource) deleteResource(ctx context.Context) syscall.Errno {
+	if r.KubeFS == nil || r.KubeFS.DynamicClient == nil {
+		return syscall.EIO
+	}
+	client := r.KubeFS.DynamicClient
+	var err error
+	if r.Namespace.Clusterwide {
+		err = client.Resource(r.GroupVersionResource).Delete(ctx, r.Name, v1.DeleteOptions{})
+	} else {
+		err = client.Resource(r.GroupVersionResource).Namespace(r.Namespace.Name).Delete(ctx, r.Name, v1.DeleteOptions{})
+	}
+	if err == nil || apierrors.IsNotFound(err) {
+		return 0
+	}
+	if apierrors.IsForbidden(err) {
+		Errorf("Forbidden deleting %s: %v", r.logRef(), err)
+		return syscall.EACCES
+	}
+	if apierrors.IsInvalid(err) {
+		Errorf("Invalid delete for %s: %v", r.logRef(), err)
+		return syscall.EINVAL
+	}
+	Errorf("Error deleting %s: %v", r.logRef(), err)
+	return syscall.EIO
+}
+
 func (r *Resource) maybeStripManagedFields(obj *unstructured.Unstructured) {
 	if obj == nil || r.shouldShowManagedFields() {
 		return

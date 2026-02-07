@@ -15,6 +15,7 @@ type Config struct {
 	Namespaces        []string     `yaml:"namespaces" json:"namespaces"`
 	AllowRules        []FilterRule `yaml:"allow" json:"allow"`
 	DenyRules         []FilterRule `yaml:"deny" json:"deny"`
+	AllowDelete       bool         `yaml:"allowDelete" json:"allowDelete"`
 	ShowManagedFields bool         `yaml:"showManagedFields" json:"showManagedFields"`
 }
 
@@ -27,6 +28,7 @@ func DefaultConfig() Config {
 	return Config{
 		LogLevel:          "info",
 		Scope:             ScopeCluster,
+		AllowDelete:       false,
 		ShowManagedFields: false,
 	}
 }

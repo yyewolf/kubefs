@@ -18,6 +18,7 @@ func (k *KubeFS) AddNamespace(ctx context.Context, name string, clusterwide bool
 	ns := &Namespace{
 		Name:        name,
 		Clusterwide: clusterwide,
+		KubeFS:      k,
 	}
 	k.AddChild(name, k.NewPersistentInode(ctx, ns, fs.StableAttr{Mode: fuse.S_IFDIR}), false)
 }

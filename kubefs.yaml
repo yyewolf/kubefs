@@ -1,6 +1,10 @@
 logLevel: info
 scope: cluster
 
+allow:
+  - apiGroups: ["core"]
+    resources: ["configmaps"]
+
 ## Optional filters. If allow is empty, everything is allowed unless denied.
 # allow:
 #   - apiGroups: ["apps"]
@@ -8,7 +12,9 @@ scope: cluster
 #   - apiGroups: ["batch"]
 #     resources: ["jobs"]
 #   - apiGroups: ["core"]
-#     resources: ["services"]
+
+## Optional delete support. Defaults to false.
+# allowDelete: true
 
 ## Optional deny rules. If a resource matches any deny rule, it will be excluded even if it matches an allow rule.
 # deny:

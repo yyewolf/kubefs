@@ -3,16 +3,19 @@ package kubefs
 import (
 	"bytes"
 	"os"
+	"strings"
 
 	"sigs.k8s.io/yaml"
 )
 
 type Config struct {
-	ShowManagedFields bool `yaml:"showManagedFields"`
+	LogLevel          string `yaml:"logLevel"`
+	ShowManagedFields bool   `yaml:"showManagedFields"`
 }
 
 func DefaultConfig() Config {
 	return Config{
+		LogLevel:          "info",
 		ShowManagedFields: false,
 	}
 }
@@ -33,6 +36,10 @@ func LoadConfig(path string) (Config, error) {
 
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, err
+	}
+
+	if strings.TrimSpace(cfg.LogLevel) == "" {
+		cfg.LogLevel = DefaultConfig().LogLevel
 	}
 
 	return cfg, nil

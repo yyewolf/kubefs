@@ -40,6 +40,7 @@ This can be useful for development and debugging purposes.`,
 		if err != nil {
 			log.Fatalf("Failed to load config: %v", err)
 		}
+		kubefs.SetLogLevel(config.LogLevel)
 
 		var signalChan = make(chan os.Signal, 1)
 		signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
@@ -123,6 +124,7 @@ func startConfigWatcher(path string, kubeFs *kubefs.KubeFS, stopCh <-chan struct
 					log.Printf("Failed to reload config from %s: %v", path, err)
 					continue
 				}
+				kubefs.SetLogLevel(config.LogLevel)
 				kubeFs.SetConfig(config)
 				log.Printf("Reloaded config from %s", path)
 			case err, ok := <-watcher.Errors:

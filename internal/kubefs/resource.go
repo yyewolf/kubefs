@@ -2,7 +2,6 @@ package kubefs
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"syscall"
@@ -52,7 +51,7 @@ var _ = (fs.NodeFlusher)((*Resource)(nil))
 var _ = (fs.NodeReleaser)((*Resource)(nil))
 
 func (r *Resource) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	fmt.Println("GETATTR")
+	Tracef("Getattr %s", r.Filename())
 	out.Mode = fuse.S_IFREG | 0664
 	out.Uid = uint32(1000)
 	out.Gid = uint32(1000)
@@ -66,7 +65,7 @@ func (r *Resource) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrO
 }
 
 func (r *Resource) Statx(ctx context.Context, flags uint32, mask uint32, out *fuse.StatxOut) syscall.Errno {
-	fmt.Println("Statx")
+	Tracef("Statx %s", r.Filename())
 	out.Mode = fuse.S_IFREG | 0664
 	out.Uid = uint32(1000)
 	out.Gid = uint32(1000)
@@ -122,14 +121,14 @@ func (r *Resource) Read(ctx context.Context, _ fs.FileHandle, dest []byte, offse
 }
 
 func (r *Resource) Write(ctx context.Context, fh fs.FileHandle, data []byte, offset int64) (uint32, syscall.Errno) {
-	fmt.Println("Write")
+	Tracef("Write %s offset=%d size=%d", r.Filename(), offset, len(data))
 	if offset < 0 {
-		fmt.Printf("Invalid offset: %d\n", offset)
+		Warnf("Invalid offset for %s: %d", r.Filename(), offset)
 		return 0, syscall.EINVAL
 	}
 	maxInt := int64(^uint(0) >> 1)
 	if offset > maxInt {
-		fmt.Printf("Offset too large: %d\n", offset)
+		Warnf("Offset too large for %s: %d", r.Filename(), offset)
 		return 0, syscall.EINVAL
 	}
 
@@ -149,18 +148,18 @@ func (r *Resource) Write(ctx context.Context, fh fs.FileHandle, data []byte, off
 }
 
 func (r *Resource) Flush(ctx context.Context, fh fs.FileHandle) syscall.Errno {
-	fmt.Println("Flush")
+	Tracef("Flush %s", r.Filename())
 	return r.flush(ctx)
 }
 
 func (r *Resource) Release(ctx context.Context, fh fs.FileHandle) syscall.Errno {
-	fmt.Println("Release")
+	Tracef("Release %s", r.Filename())
 	return r.flush(ctx)
 }
 
 func (r *Resource) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
 	if in.Valid&fuse.FATTR_SIZE != 0 {
-		fmt.Println("Setattr", in.Size, in.Length, in.InHeader)
+		Tracef("Setattr %s size=%d", r.Filename(), in.Size)
 
 		maxInt := int64(^uint(0) >> 1)
 		if in.Size > uint64(maxInt) {
@@ -175,7 +174,7 @@ func (r *Resource) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAt
 			copy(newData, r.data)
 			r.data = newData
 		}
-		fmt.Println(len(r.data), string(r.data))
+		Tracef("Setattr %s newSize=%d", r.Filename(), len(r.data))
 		r.dirty = true
 		r.mu.Unlock()
 	}
@@ -193,6 +192,7 @@ func (r *Resource) fetchYAML(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	Debugf("Fetched %s", r.logRef())
 	return yaml.JSONToYAML(jsonData)
 }
 
@@ -225,19 +225,19 @@ func (r *Resource) flush(ctx context.Context) syscall.Errno {
 
 func (r *Resource) applyYAML(ctx context.Context, data []byte) syscall.Errno {
 	if len(data) == 0 {
-		fmt.Println("empty")
+		Warnf("Empty write for %s", r.logRef())
 		return syscall.EINVAL
 	}
 
 	jsonData, err := yaml.YAMLToJSON(data)
 	if err != nil {
-		fmt.Println(err)
+		Errorf("Invalid YAML for %s: %v", r.logRef(), err)
 		return syscall.EINVAL
 	}
 
 	obj := &unstructured.Unstructured{}
 	if err := obj.UnmarshalJSON(jsonData); err != nil {
-		fmt.Println(err)
+		Errorf("Invalid JSON for %s: %v", r.logRef(), err)
 		return syscall.EINVAL
 	}
 	r.maybeStripManagedFields(obj)
@@ -249,7 +249,7 @@ func (r *Resource) applyYAML(ctx context.Context, data []byte) syscall.Errno {
 	if obj.GetName() == "" {
 		obj.SetName(r.Name)
 	} else if obj.GetName() != r.Name {
-		fmt.Printf("Name mismatch: expected %s, got %s\n", r.Name, obj.GetName())
+		Warnf("Name mismatch for %s: expected %s, got %s", r.logRef(), r.Name, obj.GetName())
 		return syscall.EINVAL
 	}
 
@@ -259,7 +259,7 @@ func (r *Resource) applyYAML(ctx context.Context, data []byte) syscall.Errno {
 		if obj.GetNamespace() == "" {
 			obj.SetNamespace(r.Namespace.Name)
 		} else if obj.GetNamespace() != r.Namespace.Name {
-			fmt.Printf("Namespace mismatch: expected %s, got %s\n", r.Namespace.Name, obj.GetNamespace())
+			Warnf("Namespace mismatch for %s: expected %s, got %s", r.logRef(), r.Namespace.Name, obj.GetNamespace())
 			return syscall.EINVAL
 		}
 	}
@@ -282,19 +282,19 @@ func (r *Resource) applyYAML(ctx context.Context, data []byte) syscall.Errno {
 	}
 
 	if updateErr == nil {
-		fmt.Printf("Successfully applied %s/%s\n", r.GroupVersionKind.String(), r.Name)
+		Infof("Applied %s", r.logRef())
 		return 0
 	}
 	if apierrors.IsForbidden(updateErr) {
-		fmt.Printf("Forbidden: %v\n", updateErr)
+		Errorf("Forbidden applying %s: %v", r.logRef(), updateErr)
 		return syscall.EACCES
 	}
 	if apierrors.IsInvalid(updateErr) {
-		fmt.Printf("Invalid: %v\n", updateErr)
+		Errorf("Invalid resource %s: %v", r.logRef(), updateErr)
 		return syscall.EINVAL
 	}
 
-	fmt.Printf("Error applying resource: %v\n", updateErr)
+	Errorf("Error applying %s: %v", r.logRef(), updateErr)
 	return syscall.EIO
 }
 
@@ -310,4 +310,14 @@ func (r *Resource) shouldShowManagedFields() bool {
 		return DefaultConfig().ShowManagedFields
 	}
 	return r.KubeFS.GetConfig().ShowManagedFields
+}
+
+func (r *Resource) logRef() string {
+	if r.Namespace == nil {
+		return r.GroupVersionKind.String() + "/" + r.Name
+	}
+	if r.Namespace.Clusterwide {
+		return r.GroupVersionKind.String() + "/" + r.Name
+	}
+	return r.GroupVersionKind.String() + "/" + r.Namespace.Name + "/" + r.Name
 }

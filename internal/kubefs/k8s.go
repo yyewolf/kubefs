@@ -54,8 +54,6 @@ func (k *KubeFS) AddResource(ctx context.Context, name string, plural string, na
 
 	if child := nsInode.GetChild(res.Filename()); child != nil {
 		go func() {
-			time.Sleep(2000 * time.Millisecond)
-
 			child.Operations().(*Resource).changes++
 			child.Operations().(*Resource).updatedAt = time.Now()
 

@@ -54,6 +54,7 @@ func Inform(kubefs *KubeFS) {
 	if err != nil {
 		Fatalf("Error creating kubernetes clientset: %v", err)
 	}
+	kubefs.DiscoveryClient = kubeClient.Discovery()
 
 	// Load namespaces and watch for namespace changes
 	var namespaceInformer cache.SharedInformer

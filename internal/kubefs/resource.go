@@ -79,6 +79,7 @@ func (r *Resource) Statx(ctx context.Context, flags uint32, mask uint32, out *fu
 }
 
 func (r *Resource) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	Tracef("Open %s flags=%d", r.Filename(), flags)
 	r.mu.Lock()
 	if r.data == nil || !r.dirty {
 		data, err := r.fetchYAML(ctx)
@@ -93,6 +94,7 @@ func (r *Resource) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fu
 }
 
 func (r *Resource) Read(ctx context.Context, _ fs.FileHandle, dest []byte, offset int64) (fuse.ReadResult, syscall.Errno) {
+	Tracef("Read %s offset=%d size=%d", r.Filename(), offset, len(dest))
 	r.mu.Lock()
 	resp := r.data
 	if resp == nil || !r.dirty {
@@ -212,7 +214,6 @@ func (r *Resource) flush(ctx context.Context) syscall.Errno {
 	}
 	data := make([]byte, len(r.data))
 	copy(data, r.data)
-	r.dirty = false
 	r.mu.Unlock()
 
 	go func() {
@@ -220,7 +221,18 @@ func (r *Resource) flush(ctx context.Context) syscall.Errno {
 		r.WriteCache(0, data)
 	}()
 
-	return r.applyYAML(ctx, data)
+	applyErr := r.applyYAML(ctx, data)
+	if applyErr == 0 {
+		r.mu.Lock()
+		r.dirty = false
+		r.mu.Unlock()
+		return 0
+	}
+	if applyErr == syscall.EINVAL {
+		Debugf("Deferred apply for %s due to invalid or incomplete content", r.logRef())
+		return 0
+	}
+	return applyErr
 }
 
 func (r *Resource) applyYAML(ctx context.Context, data []byte) syscall.Errno {
@@ -231,13 +243,13 @@ func (r *Resource) applyYAML(ctx context.Context, data []byte) syscall.Errno {
 
 	jsonData, err := yaml.YAMLToJSON(data)
 	if err != nil {
-		Errorf("Invalid YAML for %s: %v", r.logRef(), err)
+		Warnf("Invalid YAML for %s: %v", r.logRef(), err)
 		return syscall.EINVAL
 	}
 
 	obj := &unstructured.Unstructured{}
 	if err := obj.UnmarshalJSON(jsonData); err != nil {
-		Errorf("Invalid JSON for %s: %v", r.logRef(), err)
+		Warnf("Invalid JSON for %s: %v", r.logRef(), err)
 		return syscall.EINVAL
 	}
 	r.maybeStripManagedFields(obj)

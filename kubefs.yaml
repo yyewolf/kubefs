@@ -1,9 +1,5 @@
-logLevel: info
+logLevel: trace
 scope: cluster
-
-allow:
-  - apiGroups: ["core"]
-    resources: ["configmaps"]
 
 ## Optional filters. If allow is empty, everything is allowed unless denied.
 # allow:
@@ -15,6 +11,9 @@ allow:
 
 ## Optional delete support. Defaults to false.
 # allowDelete: true
+
+## Optional create support. Defaults to false.
+# allowCreate: true
 
 ## Optional deny rules. If a resource matches any deny rule, it will be excluded even if it matches an allow rule.
 # deny:

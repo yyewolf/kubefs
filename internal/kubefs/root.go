@@ -7,14 +7,16 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 )
 
 type KubeFS struct {
 	fs.Inode
 	*dynamic.DynamicClient
-	Config   Config
-	configMu sync.RWMutex
+	DiscoveryClient discovery.DiscoveryInterface
+	Config          Config
+	configMu        sync.RWMutex
 }
 
 func NewKubeFS(config Config) *KubeFS {

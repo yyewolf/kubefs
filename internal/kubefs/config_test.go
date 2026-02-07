@@ -19,6 +19,7 @@ func TestParseConfig_NormalizesRulesAndNamespaces(t *testing.T) {
 	data := []byte("" +
 		"logLevel: ''\n" +
 		"scope: namespace\n" +
+		"allowCreate: true\n" +
 		"allowDelete: true\n" +
 		"namespaces: [Dev, qa, dev]\n" +
 		"allow:\n" +
@@ -38,6 +39,9 @@ func TestParseConfig_NormalizesRulesAndNamespaces(t *testing.T) {
 	}
 	if cfg.Scope != ScopeNamespace {
 		t.Fatalf("expected scope %q, got %q", ScopeNamespace, cfg.Scope)
+	}
+	if !cfg.AllowCreate {
+		t.Fatalf("expected allowCreate to be true")
 	}
 	if !cfg.AllowDelete {
 		t.Fatalf("expected allowDelete to be true")

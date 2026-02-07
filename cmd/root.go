@@ -162,6 +162,10 @@ func warnIfScopeChanged(oldConfig kubefs.Config, newConfig kubefs.Config) {
 	}
 	if !sameNamespaces(oldConfig.Namespaces, newConfig.Namespaces) {
 		log.Printf("Namespaces changed; restart required to apply")
+		return
+	}
+	if !sameRules(oldConfig.AllowRules, newConfig.AllowRules) || !sameRules(oldConfig.DenyRules, newConfig.DenyRules) {
+		log.Printf("Filters changed; restart required to apply")
 	}
 }
 
@@ -173,6 +177,28 @@ func sameNamespaces(left []string, right []string) bool {
 		if left[index] != right[index] {
 			return false
 		}
+	}
+	return true
+}
+
+func sameRules(left []kubefs.FilterRule, right []kubefs.FilterRule) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if !sameRule(left[index], right[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameRule(left kubefs.FilterRule, right kubefs.FilterRule) bool {
+	if !sameNamespaces(left.ApiGroups, right.ApiGroups) {
+		return false
+	}
+	if !sameNamespaces(left.Resources, right.Resources) {
+		return false
 	}
 	return true
 }

@@ -328,6 +328,9 @@ func discoverResources(kubeClient kubernetes.Interface, dynamicClient dynamic.In
 				Version:  groupVersion.Version,
 				Resource: resource.Name,
 			}
+			if !kubefs.AllowsResource(gvr) {
+				continue
+			}
 
 			if kubefs.IsClusterScope() {
 				addInformer(dynamicClient, gvr, resource.Kind, kubefs, metav1.NamespaceAll)
@@ -342,6 +345,9 @@ func discoverResources(kubeClient kubernetes.Interface, dynamicClient dynamic.In
 }
 
 func addInformersForScope(dynamicClient dynamic.Interface, gvr schema.GroupVersionResource, kind string, kubefs *KubeFS, scope apiextensionsv1.ResourceScope) {
+	if !kubefs.AllowsResource(gvr) {
+		return
+	}
 	if kubefs.IsClusterScope() {
 		addInformer(dynamicClient, gvr, kind, kubefs, metav1.NamespaceAll)
 		return

@@ -1,6 +1,20 @@
 logLevel: info
 scope: cluster
 
+## Optional filters. If allow is empty, everything is allowed unless denied.
+# allow:
+#   - apiGroups: ["apps"]
+#     resources: ["deployments", "statefulsets"]
+#   - apiGroups: ["batch"]
+#     resources: ["jobs"]
+#   - apiGroups: ["core"]
+#     resources: ["services"]
+
+## Optional deny rules. If a resource matches any deny rule, it will be excluded even if it matches an allow rule.
+# deny:
+#   - apiGroups: ["*"]
+#     resources: ["events"]
+
 ## If you want to watch resources in specific namespaces, change the scope to "namespace" and specify the namespaces.
 # scope: namespace
 # namespaces:

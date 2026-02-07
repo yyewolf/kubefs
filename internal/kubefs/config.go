@@ -10,10 +10,12 @@ import (
 )
 
 type Config struct {
-	LogLevel          string   `yaml:"logLevel"`
-	Scope             string   `yaml:"scope"`
-	Namespaces        []string `yaml:"namespaces"`
-	ShowManagedFields bool     `yaml:"showManagedFields"`
+	LogLevel          string       `yaml:"logLevel" json:"logLevel"`
+	Scope             string       `yaml:"scope" json:"scope"`
+	Namespaces        []string     `yaml:"namespaces" json:"namespaces"`
+	AllowRules        []FilterRule `yaml:"allow" json:"allow"`
+	DenyRules         []FilterRule `yaml:"deny" json:"deny"`
+	ShowManagedFields bool         `yaml:"showManagedFields" json:"showManagedFields"`
 }
 
 const (
@@ -30,14 +32,19 @@ func DefaultConfig() Config {
 }
 
 func LoadConfig(path string) (Config, error) {
-	cfg := DefaultConfig()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return cfg, nil
+			return DefaultConfig(), nil
 		}
-		return cfg, err
+		return DefaultConfig(), err
 	}
+
+	return ParseConfig(data)
+}
+
+func ParseConfig(data []byte) (Config, error) {
+	cfg := DefaultConfig()
 
 	if len(bytes.TrimSpace(data)) == 0 {
 		return cfg, nil
@@ -66,8 +73,76 @@ func normalizeConfig(cfg Config) Config {
 	cfg.Scope = scope
 
 	cfg.Namespaces = normalizeNamespaces(cfg.Namespaces)
+	cfg.AllowRules = normalizeRules(cfg.AllowRules)
+	cfg.DenyRules = normalizeRules(cfg.DenyRules)
 
 	return cfg
+}
+
+func normalizeRules(rules []FilterRule) []FilterRule {
+	if len(rules) == 0 {
+		return nil
+	}
+
+	result := make([]FilterRule, 0, len(rules))
+	for _, rule := range rules {
+		clean := FilterRule{
+			ApiGroups: normalizeGroups(rule.ApiGroups),
+			Resources: normalizeValues(rule.Resources),
+		}
+		if len(clean.ApiGroups) == 0 && len(clean.Resources) == 0 {
+			continue
+		}
+		result = append(result, clean)
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+
+	return result
+}
+
+func normalizeGroups(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func normalizeValues(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func normalizeNamespaces(namespaces []string) []string {

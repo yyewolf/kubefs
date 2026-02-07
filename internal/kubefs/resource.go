@@ -14,7 +14,6 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/yaml"
 )
 
@@ -23,6 +22,7 @@ type Resource struct {
 	Namespace            *Namespace
 	GroupVersionKind     schema.GroupVersionKind
 	GroupVersionResource schema.GroupVersionResource
+	KubeFS               *KubeFS
 
 	mu    sync.Mutex
 	data  []byte
@@ -32,7 +32,6 @@ type Resource struct {
 	updatedAt time.Time
 
 	fs.Inode
-	*dynamic.DynamicClient
 }
 
 func (r *Resource) Filename() string {
@@ -189,6 +188,7 @@ func (r *Resource) fetchYAML(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	r.maybeStripManagedFields(resource)
 	jsonData, err := resource.MarshalJSON()
 	if err != nil {
 		return nil, err
@@ -197,10 +197,11 @@ func (r *Resource) fetchYAML(ctx context.Context) ([]byte, error) {
 }
 
 func (r *Resource) getResource(ctx context.Context) (*unstructured.Unstructured, error) {
+	client := r.KubeFS.DynamicClient
 	if r.Namespace.Clusterwide {
-		return r.Resource(r.GroupVersionResource).Get(ctx, r.Name, v1.GetOptions{})
+		return client.Resource(r.GroupVersionResource).Get(ctx, r.Name, v1.GetOptions{})
 	}
-	return r.Resource(r.GroupVersionResource).Namespace(r.Namespace.Name).Get(ctx, r.Name, v1.GetOptions{})
+	return client.Resource(r.GroupVersionResource).Namespace(r.Namespace.Name).Get(ctx, r.Name, v1.GetOptions{})
 }
 
 func (r *Resource) flush(ctx context.Context) syscall.Errno {
@@ -239,6 +240,7 @@ func (r *Resource) applyYAML(ctx context.Context, data []byte) syscall.Errno {
 		fmt.Println(err)
 		return syscall.EINVAL
 	}
+	r.maybeStripManagedFields(obj)
 
 	if obj.GroupVersionKind().Empty() {
 		obj.SetGroupVersionKind(r.GroupVersionKind)
@@ -263,17 +265,18 @@ func (r *Resource) applyYAML(ctx context.Context, data []byte) syscall.Errno {
 	}
 
 	var updateErr error
+	client := r.KubeFS.DynamicClient
 	if r.Namespace.Clusterwide {
-		_, updateErr = r.Resource(r.GroupVersionResource).Update(ctx, obj, v1.UpdateOptions{})
+		_, updateErr = client.Resource(r.GroupVersionResource).Update(ctx, obj, v1.UpdateOptions{})
 	} else {
-		_, updateErr = r.Resource(r.GroupVersionResource).Namespace(r.Namespace.Name).Update(ctx, obj, v1.UpdateOptions{})
+		_, updateErr = client.Resource(r.GroupVersionResource).Namespace(r.Namespace.Name).Update(ctx, obj, v1.UpdateOptions{})
 	}
 	if updateErr != nil {
 		if apierrors.IsNotFound(updateErr) {
 			if r.Namespace.Clusterwide {
-				_, updateErr = r.Resource(r.GroupVersionResource).Create(ctx, obj, v1.CreateOptions{})
+				_, updateErr = client.Resource(r.GroupVersionResource).Create(ctx, obj, v1.CreateOptions{})
 			} else {
-				_, updateErr = r.Resource(r.GroupVersionResource).Namespace(r.Namespace.Name).Create(ctx, obj, v1.CreateOptions{})
+				_, updateErr = client.Resource(r.GroupVersionResource).Namespace(r.Namespace.Name).Create(ctx, obj, v1.CreateOptions{})
 			}
 		}
 	}
@@ -293,4 +296,18 @@ func (r *Resource) applyYAML(ctx context.Context, data []byte) syscall.Errno {
 
 	fmt.Printf("Error applying resource: %v\n", updateErr)
 	return syscall.EIO
+}
+
+func (r *Resource) maybeStripManagedFields(obj *unstructured.Unstructured) {
+	if obj == nil || r.shouldShowManagedFields() {
+		return
+	}
+	unstructured.RemoveNestedField(obj.Object, "metadata", "managedFields")
+}
+
+func (r *Resource) shouldShowManagedFields() bool {
+	if r.KubeFS == nil {
+		return DefaultConfig().ShowManagedFields
+	}
+	return r.KubeFS.GetConfig().ShowManagedFields
 }

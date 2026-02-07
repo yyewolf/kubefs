@@ -2,6 +2,7 @@ package kubefs
 
 import (
 	"context"
+	"sync"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -12,12 +13,26 @@ import (
 type KubeFS struct {
 	fs.Inode
 	*dynamic.DynamicClient
+	Config   Config
+	configMu sync.RWMutex
 }
 
-func NewKubeFS(client *dynamic.DynamicClient) *KubeFS {
+func NewKubeFS(config Config) *KubeFS {
 	return &KubeFS{
-		DynamicClient: client,
+		Config: config,
 	}
+}
+
+func (k *KubeFS) SetConfig(config Config) {
+	k.configMu.Lock()
+	k.Config = config
+	k.configMu.Unlock()
+}
+
+func (k *KubeFS) GetConfig() Config {
+	k.configMu.RLock()
+	defer k.configMu.RUnlock()
+	return k.Config
 }
 
 var _ = (fs.NodeGetattrer)((*KubeFS)(nil))

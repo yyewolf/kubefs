@@ -16,9 +16,8 @@ func (k *KubeFS) AddNamespace(ctx context.Context, name string, clusterwide bool
 	}
 
 	ns := &Namespace{
-		Name:          name,
-		Clusterwide:   clusterwide,
-		DynamicClient: k.DynamicClient,
+		Name:        name,
+		Clusterwide: clusterwide,
 	}
 	k.AddChild(name, k.NewPersistentInode(ctx, ns, fs.StableAttr{Mode: fuse.S_IFDIR}), false)
 }
@@ -50,7 +49,7 @@ func (k *KubeFS) AddResource(ctx context.Context, name string, plural string, na
 		Namespace:            ns,
 		GroupVersionKind:     gvk,
 		GroupVersionResource: gvk.GroupVersion().WithResource(plural),
-		DynamicClient:        k.DynamicClient,
+		KubeFS:               k,
 	}
 
 	if child := nsInode.GetChild(res.Filename()); child != nil {
@@ -77,7 +76,7 @@ func (k *KubeFS) DeleteResource(ctx context.Context, name string, plural string,
 		Name:                 name,
 		GroupVersionKind:     gvk,
 		GroupVersionResource: gvk.GroupVersion().WithResource(plural),
-		DynamicClient:        k.DynamicClient,
+		KubeFS:               k,
 	}
 
 	nsInode := k.GetChild(namespace)

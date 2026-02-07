@@ -1,6 +1,6 @@
 # KubeFS
 
-[![Go Version](https://img.shields.io/badge/go-1.25.0-blue.svg)](https://golang.org/doc/install)
+[![Go Version](https://img.shields.io/badge/go-1.25.7-blue.svg)](https://golang.org/doc/install)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/yyewolf/kubefs)](https://goreportcard.com/report/github.com/yyewolf/kubefs)
 
